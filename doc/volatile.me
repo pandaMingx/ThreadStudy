@@ -1,0 +1,180 @@
+# Java多线程（五）--- volatile
+volatile的作用主要有两点：1.保证内存变量的可见性；2.禁止指令重排  
+关键字volatile作为线程同步的轻量级实现，能保证数据的可见性，但不能保证原子性，使用场合是在多个线程中可以感知实例变量被更改了，并且可以获得最新的值使用，也就是用多线程读取共享变量时可以获得最新值使用。
+
+## volatile保证内存变量的可见性
+```java
+public class Student {
+     int num = 0;
+
+    public void add(){
+        num = num + 60;
+    }
+
+
+    public int getNum() {
+        return num;
+    }
+
+    public void setNum(int num) {
+        this.num = num;
+    }
+}
+```
+当两个线程操作Student中的num时，如过num没有加volatile关键字修饰，其中一个线程修改了num的值，另外一个线程并不能感知。
+```java
+public class VolatileDemo {
+    public static void main(String[] args) {
+         Student student = new Student();
+
+         new Thread(() -> {
+             try {
+                 TimeUnit.SECONDS.sleep(3);
+             } catch (InterruptedException e) {
+                 e.printStackTrace();
+             }
+
+             student.add();
+
+             System.out.println("线程："+Thread.currentThread().getName()+"将student中的num修改为："+student.getNum());
+         }).start();
+
+         // main线程，如果student.num一直等于0就一直在这循环
+         while (student.getNum() == 0){
+
+         }
+        System.out.println("main线程："+Thread.currentThread().getName()+"结束！");
+    }
+}
+```
+运行上述代码输出：
+```
+线程：Thread-0将student中的num修改为：60
+
+```
+然后一直进入while循环。当在Student中的num前加上volatile后：
+```
+public class Student {
+     volatile int num = 0;
+
+    public void add(){
+        num = num + 60;
+    }
+
+    public int getNum() {
+        return num;
+    }
+    public void setNum(int num) {
+        this.num = num;
+    }
+}
+```
+再次运行,Thread-0修改num后，main线程也能获取到被修改后的值。
+```
+线程：Thread-0将student中的num修改为：60
+main线程：main结束！
+```
+## volatile不保证原子性
+在Java中，对基本数据类型的变量的读取和赋值操作是原子性操作，即这些操作是不可被中断的，要么执行，要么不执行。  
+多线程环境下，使用 volatile 修饰的变量是线程不安全的，volatile不保证原子性。
+```java
+public class Student {
+    volatile int num = 0;
+    public void addone(){
+        num++;
+    }
+}
+```
+```java
+public class VolatileDemo2 {
+    public static void main(String[] args) {
+         Student student = new Student();
+         // 20个线程,每个线程执行加一操作1000次，如果volatile保证原子性，那么最终的值是2000。
+         for(int i=1;i<=20;i++){
+             new Thread(() -> {
+                 for(int j=1;j<=1000;j++){
+                     student.addone();
+                 }
+             }).start();
+         }
+
+         // 等待20个线程都执行完成，main线程输出num的值
+        while (Thread.activeCount()>2){
+            Thread.yield();
+        }
+
+        System.out.println(student.getNum());
+    }
+}
+```
+20个线程,每个线程执行加一操作1000次，如果volatile保证原子性，那么最终的值是2000  
+最终结果小于等于2000，说明volatile不保证原子性：
+```
+18638
+```
+### 如何保证原子性？
+1.加synchronized
+```java
+public class Student {
+    volatile int num = 0;
+    public synchronized void addone(){
+        num++;
+    }
+}
+```
+2.采用lock
+```java
+public class Student {
+    volatile int num = 0;
+    Lock lock = new ReentrantLock();
+    
+    public void addone(){
+        lock.lock();
+        try{
+            num++;
+        }finally {
+            lock.unlock();
+        }
+    }
+}
+```
+3.采用AtomicInteger
+> 在java 1.5的java.util.concurrent.atomic包下提供了一些原子操作类，即对基本数据类型的 自增（加1操作），自减（减1操作）、以及加法操作（加一个数），减法操作（减一个数）进行了封装，保证这些操作是原子性操作。atomic是利用CAS来实现原子性操作的（Compare And Swap）
+```java
+public class Student {
+     //volatile int num = 0;
+    public AtomicInteger num = new AtomicInteger(0);
+    public void addone(){
+            num.getAndIncrement();
+    }
+}
+```
+
+## volatile禁止指令重排
+计算机在执行程序时，为了提高性能，编译器和处理器常常会对指令做重排，一般分为以下三种：  
+编译器优化的重排，指令并行的重排，内存系统的重排。故cpu执行的顺序未必与源代码编写的顺序一致，这种指令重排在但线程环境下程序最终执行结果与源代码顺序的执行结果是一致的，但在多线程环境下两个线程使用的变量是否能保证一致性是无法保证的。
+```
+int x = 12;// 语句1
+int y = 10;//语句2
+x = x + 2;//语句3
+y = x + y;//语句4
+```
+如上述代码经过指令重排后的执行顺序可能是1234，2134，1324。
+```java
+public class volatileDemo3 {
+   int a = 0;
+   boolean flag = false;
+
+   public void method1(){
+       a = 1;//语句1
+       flag = true;// 语句2
+   }
+
+   public void method2(){
+       if(flag){
+           a = a + 5;
+       }
+   }
+}
+```
+由于指令重排，可能先执行语句2，在method2中if条件成立，多线程环境中，由于线程的交替执行，可能存在语句1还未执行，method2计算的到的a的值为5，正确的值应该是6；
